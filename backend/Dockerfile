@@ -3,7 +3,7 @@ FROM python:3.9-slim
 
 # Cài đặt các thư viện hệ thống cần thiết cho OpenCV và PyZbar
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libzbar0 \
     && rm -rf /var/lib/apt/lists/*
