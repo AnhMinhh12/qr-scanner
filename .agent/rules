@@ -1,0 +1,145 @@
+# .cursorrules — QR Pallet Scanner
+
+## Dự án này là gì
+
+Ứng dụng quét QR code từng thùng hàng trong kho.
+Operator cầm camera, chụp từng thùng một, hệ thống đọc QR và tổng hợp kết quả cuối session.
+Stack: FastAPI (Python) + React (Vite). Không dùng framework ngoài nào khác.
+
+---
+
+## Ngôn ngữ & Văn phong
+
+- Toàn bộ comment trong code: **tiếng Anh**
+- Toàn bộ string hiển thị ra UI (label, thông báo, lỗi): **tiếng Việt**
+- Tên biến, hàm, class: **tiếng Anh, snake_case (Python) / camelCase (JS)**
+- Khi giải thích cho tôi: **tiếng Việt**
+
+---
+
+## Quy tắc Backend (Python / FastAPI)
+
+### Bắt buộc
+- Dùng **Pydantic v2** cho tất cả request/response schema
+- Mọi route đều phải có **type hint đầy đủ** — không dùng `Any`
+- Mọi hàm xử lý ảnh phải nằm trong `scanner.py` — không viết logic OpenCV trong `main.py`
+- Database access chỉ được gọi từ `session_manager.py` — không gọi trực tiếp trong route handler
+- Mọi lỗi trả về client phải theo format chuẩn:
+  ```json
+  { "error": true, "code": "ERROR_CODE", "message": "Mô tả lỗi tiếng Việt" }
+  ```
+
+### Không được làm
+- Không dùng `print()` để debug — dùng `logging`
+- Không hardcode đường dẫn file — dùng `pathlib.Path`
+- Không để bare `except:` — luôn catch exception cụ thể
+- Không blocking call trong async route — dùng `asyncio.to_thread()` cho OpenCV
+- Không xóa ảnh gốc sau khi xử lý
+
+### Cấu trúc response bắt buộc sau mỗi ảnh
+```python
+{
+    "photo_index": int,
+    "timestamp": str,          # ISO 8601
+    "decode_status": str,      # "success" | "blurry" | "failed"
+    "image_quality": str,      # "ok" | "blurry" | "dark"
+    "qr_codes": list[dict],
+    "qr_count": int,
+    "box_status": str,         # "ok" | "warning" | "failed"
+    "warnings": list[str],
+    "ui_message": str          # Tiếng Việt, hiển thị thẳng lên UI
+}
+```
+
+---
+
+## Quy tắc Frontend (React / Vite)
+
+### Bắt buộc
+- Dùng **functional component + hooks** — không dùng class component
+- Mọi API call nằm trong `src/api.js` — component không được gọi `fetch` trực tiếp
+- Loading state phải hiển thị spinner trong khi chờ response
+- Mọi lỗi từ API phải hiển thị ra UI — không `console.error` rồi bỏ qua
+- Camera access dùng `navigator.mediaDevices.getUserMedia` — không dùng thư viện ngoài
+- Sau mỗi lần chụp, disable nút "Chụp ảnh" cho đến khi có response
+
+### Không được làm
+- Không dùng `localStorage` hay `sessionStorage`
+- Không inline style — dùng CSS module hoặc class
+- Không dùng `useEffect` để fetch data khi có thể dùng event handler
+- Không render danh sách mà thiếu `key` prop
+
+### Màu trạng thái bắt buộc (dùng nhất quán toàn app)
+```
+box_status = "ok"      → xanh lá  #22c55e
+box_status = "warning" → vàng     #f59e0b
+box_status = "failed"  → đỏ       #ef4444
+```
+
+---
+
+## Quy tắc xử lý ảnh (scanner.py)
+
+Luôn thực hiện đúng thứ tự pipeline sau, không bỏ bước:
+
+```
+1. Blur check (Laplacian variance)
+2. Grayscale
+3. CLAHE
+4. Gaussian blur
+5. Sharpen (nếu cần)
+6. Auto-deskew
+7. pyzbar decode
+8. OpenCV fallback decode
+9. Preprocessing variants (nếu vẫn fail)
+10. Validate + gắn status
+```
+
+Nếu cần thêm bước preprocessing, **thêm vào cuối pipeline**, không chen vào giữa.
+
+---
+
+## Quy tắc Database
+
+- Không dùng ORM — viết raw SQL với `sqlite3`
+- Mọi query đều dùng **parameterized query** — không format string SQL
+- Luôn dùng `with conn:` (context manager) để tự commit/rollback
+- Không lưu ảnh vào DB — chỉ lưu đường dẫn file
+
+---
+
+## Quy tắc chung khi viết code
+
+1. **Viết đầy đủ** — không viết `# TODO`, không để hàm rỗng, không placeholder
+2. **Một file một lần** — khi tôi yêu cầu sửa file nào, chỉ sửa file đó
+3. **Giải thích ngắn** — sau mỗi file viết xong, tóm tắt 2–3 dòng bạn đã làm gì
+4. **Hỏi trước khi đổi cấu trúc** — nếu cần đổi tên hàm/file/schema, hỏi tôi trước
+5. **Không tự ý thêm dependency** — nếu cần thư viện mới, hỏi trước khi dùng
+6. **Giữ nguyên interface** — nếu tôi không yêu cầu, không đổi API route, schema, hay tên hàm public
+
+---
+
+## Thứ tự ưu tiên khi có conflict
+
+```
+1. Đúng logic nghiệp vụ  (quan trọng nhất)
+2. Bảo toàn dữ liệu session
+3. Tốc độ xử lý < 500ms / ảnh
+4. Code sạch
+5. Tối ưu hiệu năng  (làm sau cùng)
+```
+
+---
+
+## Các hằng số cấu hình (không tự ý thay đổi)
+
+```python
+BLUR_THRESHOLD       = 100     # Laplacian variance min
+DARK_THRESHOLD       = 40      # Mean brightness min
+MAX_RETRY_VARIANTS   = 3       # Số lần thử preprocessing khi decode fail
+MAX_PHOTOS_PER_SESSION = 200
+MAX_QR_PER_PHOTO     = 10
+TARGET_LATENCY_MS    = 500
+IMAGE_SAVE_FORMAT    = "JPEG"
+SESSION_ID_FORMAT    = "PLT-{YYYYMMDD}-{NNN}"
+```
